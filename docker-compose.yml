@@ -1,10 +1,12 @@
-version: '3.8'  
+version: '2.4'  
 services:   
-  chief:   
-    build: chief-worker
+  master:
+    cpuset: "3" 
+    # cpus: 0.31
+    build: master-worker
     restart: on-failure
-    container_name: chief
-    hostname: chief     
+    container_name: master
+    hostname: master
     expose:        
     - "12345"      
     volumes:             
@@ -13,16 +15,33 @@ services:
       tensorNet:
           ipv4_address: 172.10.0.2   
      
-  worker:      
-    build: worker    
+  worker1:
+    cpuset: "6,7" 
+    # cpus: 0.31
+    build: worker
+    hostname: worker1
     expose:        
     - "23456"      
     volumes:             
     - "./code:/root/code"  
     links:
-    - chief
+    - master
     networks:
       - tensorNet
+  worker2:
+    cpuset: "4,5" 
+    # cpus: 0.31
+
+    build: worker
+    hostname: worker2
+    expose:
+    - "14739"
+    volumes:
+    - "./code:/root/code"
+    links:
+    - master
+    networks:
+    - tensorNet
 
 
 networks:

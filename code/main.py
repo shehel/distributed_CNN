@@ -183,8 +183,8 @@ class DistResNet50(nn.Module):
 #                   Run RPC Processes                   #
 #########################################################
 
-num_batches = 3
-batch_size = 120
+num_batches = 1
+batch_size = 256
 image_w = 128
 image_h = 128
 
@@ -193,31 +193,23 @@ def run_master(split_size):
 
     # put the two model parts on worker1 and worker2 respectively
     model = DistResNet50(split_size, ["worker1", "worker2"])
-    loss_fn = nn.MSELoss()
-    opt = DistributedOptimizer(
-        optim.SGD,
-        model.parameter_rrefs(),
-        lr=0.05,
-    )
-
-    one_hot_indices = torch.LongTensor(batch_size) \
-                           .random_(0, num_classes) \
-                           .view(batch_size, 1)
-
+    model.eval()
+    tik = time.time() 
     for i in range(num_batches):
         print(f"Processing batch {i}")
         # generate random inputs and labels
         inputs = torch.randn(batch_size, 3, image_w, image_h)
-        labels = torch.zeros(batch_size, num_classes) \
-                      .scatter_(1, one_hot_indices, 1)
 
         # The distributed autograd context is the dedicated scope for the
         # distributed backward pass to store gradients, which can later be
         # retrieved using the context_id by the distributed optimizer.
         with dist_autograd.context() as context_id:
             outputs = model(inputs)
-            dist_autograd.backward(context_id, [loss_fn(outputs, labels)])
-            opt.step(context_id)
+            #dist_autograd.backward(context_id, [loss_fn(outputs, labels)])
+            #opt.step(context_id)
+    tok = time.time()
+    print(f"number of splits = {1}, execution time = {tok - tik}")
+
 
 
 def run_worker(rank, world_size, num_split):
@@ -226,16 +218,20 @@ def run_worker(rank, world_size, num_split):
     # os.environ['MASTER_PORT'] = '29500'
     os.environ['MASTER_PORT'] = '12345'
     options = rpc.TensorPipeRpcBackendOptions(num_worker_threads=256)
-
     if rank == 0:
+        print ("Init master")
         rpc.init_rpc(
             "master",
             rank=rank,
             world_size=world_size,
             rpc_backend_options=options
         )
+
+        print (rank)
         run_master(num_split)
     else:
+
+        print ("init worker rank ", rank)
         rpc.init_rpc(
             f"worker{rank}",
             rank=rank,
@@ -255,74 +251,42 @@ def run_worker(rank, world_size, num_split):
     # block until all rpcs finish
     rpc.shutdown()
 
-"""
 def main():
-  per_worker_batch_size = 64
+    print ("main")
+    world_size = 3
+    rank = getIndex()-2
+    num_split = 1
 
-  # read tf_config from json file
-  with open('/root/TF_CONFIG.json') as f:
-    tf_config = json.load(f)
-
-
-  # modify worker index based on assigned ip_address
-  tf_config['task']['index'] = getIndex(tf_config)
-
-  os.environ['TF_CONFIG'] = json.dumps(tf_config)
-
-  # specify number of workers as length of worker list in tf_config
-  num_workers = len(tf_config['cluster']['worker'])
-
-
-  # create a MirroredStartegy
-  strategy = tf.distribute.experimental.MultiWorkerMirroredStrategy(tf.distribute.experimental.CollectiveCommunication.RING)
-
-  global_batch_size = per_worker_batch_size * num_workers
-  multi_worker_dataset = mnist.mnist_dataset(global_batch_size)
-
-  # open a strategy scope
-  with strategy.scope():
-    # Model building/compiling need to be within `strategy.scope()`.
-    multi_worker_model = mnist.build_and_compile_cnn_model()
-
-  # train the model on all available workers
-  multi_worker_model.fit(multi_worker_dataset, epochs=3, steps_per_epoch=70)
-
-  print('Worker_' +str(tf_config['task']['index'])+ ': Finished training my batch')
-
-
+    run_worker(rank, world_size, num_split)
+    
 def getIPAddress():
-    # extract ip address of container
-    try:
-        node_name = socket.gethostname()
-        ip = socket.gethostbyname(node_name)
-    except:
-        print("Unable to get Hostname and IP")
-    return ip
-
+  #extract ip address of container
+  try: 
+      node_name = socket.gethostname() 
+      ip = socket.gethostbyname(node_name) 
+  except: 
+      print("Unable to get Hostname and IP")  
+  return ip
 
 # returns the index of the worker based on extracted ip address
-def getIndex(tf_config):
-    # extract the ip address of the container
-    ip = getIPAddress()
-    # if ip address is static one assigned to chief-worker, then index=0
-    if ip == '172.10.0.2':
-        index = 0
-    # otherwise, get the index of the ip address in the tf_config's list
-    else:
-        # concatenate ip address with port number
-        ipStr = ip + ':23456'
-        # get the index of the matching ip:port string in the tf_config's list
-        index = tf_config['cluster']['worker'].index(ipStr)
-
-    print('Extracted index=' + str(index) + ' from IPAddr=' + ip + '\n')
-    return index
-"""
+def getIndex():
+  # extract the ip address of the container
+  ip = getIPAddress()
+  # if ip address is static one assigned to chief-worker, then index=0
+  print (ip)
+  rank = int(ip.split(".")[-1])
+#   if ip == '172.10.0.2':
+#     index = 0
+#   # otherwise, get the index of the ip address in the tf_config's list
+#   else:
+#     # concatenate ip address with port number
+#     ipStr = ip + ':23456'
+#     # get the index of the matching ip:port string in the tf_config's list 
+#     index = tf_config['cluster']['worker'].index(ipStr)
+  
+#   print('Extracted index=' +str(index)+ ' from IPAddr=' + ip +'\n')
+  return rank
 
 
 if __name__=="__main__":
-    world_size = 3
-    for num_split in [1, 2, 4, 8]:
-        tik = time.time()
-        mp.spawn(run_worker, args=(world_size, num_split), nprocs=world_size, join=True)
-        tok = time.time()
-        print(f"number of splits = {num_split}, execution time = {tok - tik}")
+    main()
